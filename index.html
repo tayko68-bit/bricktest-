@@ -1,0 +1,54 @@
+¡Cazado el primer error! No te preocupes, esto es completamente normal en la "Iteración 0". De hecho, ver ese recuadro rojo significa que tu sistema de control de errores funciona perfectamente.
+El mensaje Invalid response format (Formato de respuesta no válido) nos está dando una pista clave: **el servidor no está devolviendo el JSON que esperábamos, sino otra cosa (seguramente un texto plano o un HTML de error).**
+Esto suele pasar por dos motivos principales en este punto:
+### 1. El culpable más probable: El "follón" del Multipart Manual
+Construir los bytes del formulario a mano (Uint8Array) en el navegador es muy frágil. Si un solo carácter \r\n o el boundary no le gusta a la API de Brickognize, el servidor se confunde, rechaza la petición y devuelve un error de texto (o una página de Cloudflare) que tu código intenta leer como JSON, haciendo que explote.
+### 2. El fantasma del CORS
+Como estás probando desde un entorno cliente (veo en la captura que dice boveda-react arriba, posiblemente un entorno local o un despliegue de prueba en el móvil), el navegador de iOS bloquea o altera las peticiones directas a dominios externos si no cumplen estrictamente las políticas de seguridad.
+## Cómo solucionarlo ahora mismo
+Vamos a simplificar el código eliminando toda la ingeniería de bytes manual y dejando que el navegador haga su magia de forma nativa con FormData.
+Busca en tu <script> el bloque que gestiona el btn.addEventListener('click', ...) y **reemplázalo por este**:
+```javascript
+btn.addEventListener('click', async()=>{
+  if(!selFile)return;
+  hide();result.classList.remove('show');
+  btn.disabled=true;stLoad.classList.add('show');
+
+  try{
+    // 1. Usamos el FormData nativo del navegador (adiós a los ArrayBuffers y Boundaries manuales)
+    const formData = new FormData();
+    formData.append('query_image', selFile);
+
+    // 2. Hacemos la petición limpia
+    const res = await fetch('https://api.brickognize.com/predict/figs/', {
+      method: 'POST',
+      headers: { 
+        'accept': 'application/json'
+        // NOTA: No pongas 'Content-Type': 'multipart/form-data' aquí.
+        // El navegador lo añade automáticamente junto con el boundary correcto.
+      },
+      body: formData
+    });
+
+    // Si el servidor responde con un error (ej. 400, 404, 500), capturamos el texto para saber qué pasa
+    if(!res.ok){
+      const errText = await res.text();
+      throw new Error(`HTTP ${res.status} — ${errText}`);
+    }
+
+    // Si todo va bien, parseamos el JSON
+    const data = await res.json();
+    render(data);
+
+  }catch(e){
+    showErr(e.message || 'Error de red o CORS');
+    btn.disabled=false;
+    console.error(e);
+  }
+});
+
+```
+## ¿Qué ganamos con esto?
+ 1. Si el problema era el formato de la imagen/bytes, **ahora funcionará**, porque FormData empaqueta la foto perfectamente tal y como la espera la API.
+ 2. Si el problema es de **CORS** (bloqueo del navegador), el error cambiará y nos dirá claramente algo estilo NetworkError o Failed to fetch.
+Si te sigue dando error tras cambiarlo, dime qué pone exactamente el nuevo mensaje rojo y lo liquidamos. ¡Paso a paso!
